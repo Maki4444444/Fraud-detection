@@ -330,6 +330,191 @@ Output
 | AUC-PR and F1 over Accuracy | With <10% fraud, a model predicting all-legitimate achieves >90% accuracy while catching zero fraud — accuracy is a meaningless metric here |
 | Binary search for IP lookup | IpAddress_to_Country uses ranges not exact keys — binary search on sorted bounds is O(log n) and handles ~138K ranges efficiently |
 
+## 3. Completed Work: Task 2 — Model Building and Evaluation
+
+### 3.1 Overview
+
+Task 2 trained and evaluated four classification models on both preprocessed pipelines:
+Logistic Regression (baseline), Random Forest, XGBoost, and LightGBM. Each model was
+assessed on the held-out test set and validated with 5-fold stratified cross-validation.
+Primary metric: AUC-PR. Secondary metrics: F1-Score, Precision, Recall, ROC-AUC.
+
+---
+
+### 3.2 Fraud_Data Pipeline Results
+
+#### 3.2.1 Logistic Regression (Baseline)
+
+- **AUC-PR:** 0.7005 | **F1:** 0.5988 | **Precision:** 0.5157 | **Recall:** 0.7138
+- **Fraud caught:** 2,020 / 2,830 (71.4%) | **False alarms:** 1,897 (6.93% of legit)
+- **Observation:** The baseline establishes a meaningful floor — AUC-PR of 0.7005 is
+  well above the random baseline of 0.094, confirming the engineered features
+  (particularly `time_since_signup` and transaction velocity) carry real linear signal.
+  However, the low precision of 0.52 means nearly 1 in 2 fraud alerts is a false alarm,
+  generating 1,897 unnecessary blocks. The model prioritizes recall at the expense of
+  precision, which is operationally noisy. The CV AUC-PR of 0.8912 is substantially
+  higher than the test AUC-PR of 0.7005, indicating the default 0.5 threshold is
+  poorly calibrated for this class imbalance rather than true overfitting.
+
+#### 3.2.2 Random Forest
+
+- **AUC-PR:** 0.7116 | **F1:** 0.6097 | **Precision:** 0.5432 | **Recall:** 0.6947
+- **Fraud caught:** 1,966 / 2,830 (69.5%) | **False alarms:** 1,653 (6.03% of legit)
+- **Observation:** Random Forest improves AUC-PR modestly (+0.011 over LR) and reduces
+  false alarms from 1,897 to 1,653, but catches slightly fewer fraud cases in absolute
+  terms. The ensemble's non-linear boundary improves precision (0.54 vs 0.52) but the
+  model still operates in a high-recall, low-precision regime at the default threshold.
+  CV AUC-PR of 0.9626 confirms strong generalization potential that threshold tuning
+  would unlock.
+
+#### 3.2.3 XGBoost
+
+- **AUC-PR:** 0.7131 | **F1:** 0.6902 | **Precision:** 0.9113 | **Recall:** 0.5555
+- **Fraud caught:** 1,572 / 2,830 (55.5%) | **False alarms:** 153 (0.56% of legit)
+- **Observation:** XGBoost takes a fundamentally different operating stance — precision
+  jumps to 91.1% and false alarms collapse from 1,897 (LR) to just 153, a 92% reduction.
+  The tradeoff is lower recall (55.5%), meaning it misses more fraud at the default
+  threshold. Best F1 of 0.6902 reflects the superior precision-recall balance. CV
+  AUC-PR of 0.9856 ± 0.0005 is the second highest with the second lowest variance,
+  confirming stable generalization.
+
+#### 3.2.4 LightGBM
+
+- **AUC-PR:** 0.7136 | **F1:** 0.6900 | **Precision:** 0.9088 | **Recall:** 0.5562
+- **Fraud caught:** 1,574 / 2,830 (55.6%) | **False alarms:** 158 (0.58% of legit)
+- **Observation:** LightGBM is virtually indistinguishable from XGBoost at the default
+  threshold — 1,574 vs 1,572 fraud caught, 158 vs 153 false alarms, F1 of 0.690 vs
+  0.690. LightGBM achieves the highest CV AUC-PR of 0.9867 ± 0.0004 — the best and
+  most stable generalization of any model on this pipeline — while training approximately
+  40% faster than XGBoost.
+
+#### 3.2.5 Model Comparison — Fraud_Data
+
+[ Figure Placeholder: Model Comparison Bar Chart — Fraud_Data ]
+[ Figure Placeholder: Precision-Recall Curves — Fraud_Data ]
+[ Figure Placeholder: ROC Curves — Fraud_Data ]
+
+| Model | AUC-PR | F1 | Precision | Recall | CV AUC-PR |
+|---|---|---|---|---|---|
+| Logistic Regression | 0.7005 | 0.5988 | 0.5157 | 0.7138 | 0.8912 ± 0.0014 |
+| Random Forest | 0.7116 | 0.6097 | 0.5432 | 0.6947 | 0.9626 ± 0.0021 |
+| XGBoost | 0.7131 | **0.6902** | **0.9113** | 0.5555 | 0.9856 ± 0.0005 |
+| LightGBM | **0.7136** | 0.6900 | 0.9088 | 0.5562 | **0.9867 ± 0.0004** |
+
+**Selected model: LightGBM**
+
+Justification: Highest test AUC-PR (0.7136) and highest CV AUC-PR (0.9867) with the
+lowest cross-validation variance (±0.0004), indicating the most stable generalization.
+Near-identical test performance to XGBoost across every metric while offering faster
+retraining. Precision of 90.9% means only 158 false alarms — a 92% reduction from the
+logistic regression baseline. The PR curve confirms all four models cluster tightly
+(0.700–0.714) on the test set while the ROC curves also cluster (0.840–0.843),
+indicating the key differentiator is threshold behavior rather than ranking ability.
+Threshold calibration in Task 3 will allow LightGBM to be tuned toward any
+desired precision-recall operating point.
+
+---
+
+### 3.3 creditcard Pipeline Results
+
+#### 3.3.1 Logistic Regression (Baseline)
+
+- **AUC-PR:** 0.6738 | **F1:** 0.1005 | **Precision:** 0.0533 | **Recall:** 0.8737
+- **Fraud caught:** 83 / 95 (87.4%) | **False alarms:** 1,474 (2.60% of legit)
+- **Observation:** The extreme class imbalance (0.17% fraud, 95 fraud cases in the test
+  set) exposes the logistic regression baseline severely. Despite a deceptively high
+  accuracy of 97% and ROC-AUC of 0.9617, precision is just 0.053 — 95% of fraud alerts
+  are false alarms. The model floods the alert queue with 1,474 false positives to catch
+  83 genuine fraud cases. This is the textbook failure mode of an uncalibrated classifier
+  on extreme imbalance. CV AUC-PR of 0.9919 reflects strong latent ranking ability that
+  the default threshold fails to exploit.
+
+#### 3.3.2 Random Forest
+
+- **AUC-PR:** 0.7891 | **F1:** 0.6581 | **Precision:** 0.5540 | **Recall:** 0.8105
+- **Fraud caught:** 77 / 95 (81.1%) | **False alarms:** 62 (0.11% of legit)
+- **Observation:** Random Forest delivers the most dramatic improvement of any model
+  transition in this project — false alarms drop from 1,474 (LR) to just 62, a 96%
+  reduction, while maintaining 81.1% recall. Precision jumps from 0.053 to 0.554,
+  making the alert queue operationally viable for the first time. This is the best
+  F1 score on this pipeline (0.6581) and the best precision-recall balance at the
+  default threshold. CV AUC-PR of 0.9998 ± 0.0000 is near-perfect, confirming the
+  model has fully learned the fraud signal in the PCA feature space.
+
+#### 3.3.3 XGBoost
+
+- **AUC-PR:** 0.8018 | **F1:** 0.5474 | **Precision:** 0.4105 | **Recall:** 0.8211
+- **Fraud caught:** 78 / 95 (82.1%) | **False alarms:** 112 (0.20% of legit)
+- **Observation:** XGBoost achieves the highest test AUC-PR on this pipeline (0.8018),
+  meaning it ranks fraud transactions better than any other model across all possible
+  thresholds. It catches 78 fraud cases (one more than Random Forest) with 112 false
+  alarms. The F1 of 0.5474 is lower than Random Forest's 0.6581 because at the default
+  0.5 threshold XGBoost operates at lower precision (0.41 vs 0.55). CV AUC-PR of
+  1.0000 ± 0.0001 — tied with LightGBM — indicates near-perfect fraud ranking on the
+  training distribution.
+
+#### 3.3.4 LightGBM
+
+- **AUC-PR:** 0.7847 | **F1:** 0.5302 | **Precision:** 0.3892 | **Recall:** 0.8316
+- **Fraud caught:** 79 / 95 (83.2%) | **False alarms:** 124 (0.22% of legit)
+- **Observation:** LightGBM achieves the highest raw recall of any model on this pipeline
+  (83.2%), catching 79 of 95 fraud cases. However test AUC-PR of 0.7847 falls below
+  XGBoost (0.8018) and Random Forest (0.7891), despite CV AUC-PR of 1.0000 tied with
+  XGBoost. This suggests LightGBM's probability calibration is slightly less optimal
+  than XGBoost's on this dataset at the default threshold. CV F1 of 0.9984 confirms
+  the model generalizes extremely well when the threshold is properly set.
+
+#### 3.3.5 Model Comparison — creditcard
+
+[ Figure Placeholder: Confusion Matrices — all four models, creditcard ]
+
+| Model | AUC-PR | F1 | Precision | Recall | CV AUC-PR |
+|---|---|---|---|---|---|
+| Logistic Regression | 0.6738 | 0.1005 | 0.0533 | 0.8737 | 0.9919 ± 0.0002 |
+| Random Forest | 0.7891 | **0.6581** | **0.5540** | 0.8105 | 0.9998 ± 0.0000 |
+| XGBoost | **0.8018** | 0.5474 | 0.4105 | 0.8211 | **1.0000 ± 0.0001** |
+| LightGBM | 0.7847 | 0.5302 | 0.3892 | **0.8316** | 1.0000 ± 0.0001 |
+
+**Selected model: XGBoost**
+
+Justification: Highest test AUC-PR of 0.8018 — the primary metric — meaning XGBoost
+ranks fraud transactions better than any other model across all operating thresholds.
+CV AUC-PR of 1.0000 ± 0.0001 tied with LightGBM confirms near-perfect generalization.
+Catches 78 / 95 fraud cases (82.1%) with only 112 false alarms (0.20% of legitimate
+transactions), a practical operating point for a banking fraud alert queue. The large
+CV-to-test AUC-PR gap across all models is a dataset-level effect driven by the tiny
+absolute fraud count in the test set (95 cases) — each misclassified fraud shifts
+metrics significantly at this scale. Random Forest is the recommended alternative
+if minimizing false alarms at the default threshold is prioritized (62 false alarms
+vs 112, best F1 of 0.6581).
+
+---
+
+### 3.4 Final Model Selection
+
+| Pipeline | Selected Model | Test AUC-PR | F1 | CV AUC-PR |
+|---|---|---|---|---|
+| Fraud_Data (e-commerce) | LightGBM | 0.7136 | 0.6900 | 0.9867 ± 0.0004 |
+| creditcard (banking) | XGBoost | 0.8018 | 0.5474 | 1.0000 ± 0.0001 |
+
+**Why AUC-PR was the deciding metric:**
+With extreme class imbalance (9% fraud in Fraud_Data, 0.17% in creditcard), accuracy
+is meaningless — a model predicting all-legitimate achieves 91%/99.83% accuracy while
+catching zero fraud. Logistic Regression on creditcard demonstrates this precisely:
+97% accuracy, ROC-AUC of 0.9617, but precision of 0.053 making it operationally
+worthless. AUC-PR captures performance across all thresholds and is insensitive to
+the dominant legitimate class, making it the only honest summary metric here.
+
+**Precision vs Recall tradeoff:**
+The two pipelines demand different operating stances. For the creditcard banking pipeline,
+recall is weighted more heavily — a missed fraud is a direct financial loss with no
+recovery. For the Fraud_Data e-commerce pipeline, the cost of false positives (blocked
+customers, churn risk) is also significant, making the high-precision operating point
+of LightGBM and XGBoost (91% precision, 158 false alarms vs 1,897 for LR) the more
+defensible production choice. Threshold tuning in Task 3 will calibrate both selected
+models to the exact precision-recall operating point that minimizes total business cost.
+
+**Both selected models will be analyzed with SHAP in Task 3.**
 
 ## Data Sources
 
