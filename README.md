@@ -516,6 +516,141 @@ models to the exact precision-recall operating point that minimizes total busine
 
 **Both selected models will be analyzed with SHAP in Task 3.**
 
+## 4. Completed Work: Task 3 — Model Explainability
+
+### 4.1 Overview
+
+Task 3 applies SHAP to the two selected models from Task 2 — LightGBM on the
+Fraud_Data pipeline and XGBoost on the creditcard pipeline — covering global feature
+importance, individual prediction explanations, and actionable business recommendations.
+
+---
+
+### 4.2 SHAP Analysis — Fraud_Data Pipeline (LightGBM)
+
+#### 4.2.1 Built-in vs SHAP Feature Importance
+
+| Rank | Built-in (Gain) | SHAP (Mean \|SHAP\|) |
+|---|---|---|
+| 1 | time_since_signup_hours | time_since_signup_hours |
+| 2 | transaction_velocity | transaction_velocity |
+| 3 | purchase_value | transaction_count_24h |
+| 4 | transaction_count_24h | purchase_value |
+| 5 | hour_of_day | hour_of_day |
+| 6 | age | age |
+| 7 | transaction_count_1h | transaction_count_1h |
+| 8 | country_encoded | day_of_week |
+| 9 | day_of_week | country_encoded |
+| 10 | browser_encoded | browser_encoded |
+
+`purchase_value` ranks 3rd by gain but drops to 4th by SHAP, while `transaction_count_24h`
+rises from 4th to 3rd. Built-in gain inflates `purchase_value` due to high-gain early
+splits; SHAP correctly weights `transaction_count_24h` higher because its contribution
+is more consistent across the full fraud distribution. SHAP is the more trustworthy
+ranking as it measures per-prediction impact rather than aggregate tree structure.
+
+#### 4.2.2 SHAP Summary Plot — Top 5 Fraud Prediction Drivers
+
+1. **time_since_signup_hours** — Strongest signal. Low values push strongly toward fraud; accounts transacting within minutes of signup are the highest-confidence fraud cases.
+2. **transaction_velocity** — High velocity pushes toward fraud, capturing account takeover and synthetic identity patterns.
+3. **transaction_count_24h** — Burst activity over 24 hours flags compromised accounts being rapidly drained.
+4. **purchase_value** — Both very high values (large-ticket fraud) and very low values (card testing micro-transactions) carry fraud signal.
+5. **hour_of_day** — Overnight transactions (1–5 AM) carry consistent positive SHAP contribution, reflecting automated fraud tooling operating outside business hours.
+
+#### 4.2.3 SHAP Force Plots
+
+**True Positive:** Account aged 0.3 hours, velocity = 14.2, count_24h = 8. All three
+push strongly toward fraud. Output: 0.94. Classic new-account fraud pattern.
+
+**False Positive:** Short signup window and burst activity flag a legitimate user
+shopping during a flash sale. The model has no visibility into the promotional context
+driving the velocity spike — the primary false positive failure mode.
+
+**False Negative:** 13-day-old account with low velocity and normal purchase value.
+Account age suppresses fraud probability to 0.18 — a patient synthetic identity that
+aged the account before transacting, which current features are not designed to catch.
+
+---
+
+### 4.3 SHAP Analysis — creditcard Pipeline (XGBoost)
+
+#### 4.3.1 Built-in vs SHAP Feature Importance
+
+| Rank | Built-in (Gain) | SHAP (Mean \|SHAP\|) |
+|---|---|---|
+| 1 | V14 | V14 |
+| 2 | V10 | V4 |
+| 3 | V4 | V10 |
+| 4 | V17 | V12 |
+| 5 | V12 | V17 |
+| 6 | V11 | V11 |
+| 7 | V16 | V16 |
+| 8 | V3 | V3 |
+| 9 | V7 | V7 |
+| 10 | Amount | V26 |
+
+`Amount` drops out of the top 10 by SHAP, replaced by V26. Built-in gain overweights
+`Amount` due to frequent early splits; SHAP reveals those splits produce small individual
+contributions across many predictions. V4 and V12 rise in the SHAP ranking because
+their contributions are concentrated and high-magnitude specifically on fraud cases.
+
+#### 4.3.2 SHAP Summary Plot — Top 5 Fraud Prediction Drivers
+
+1. **V14** — Dominant signal by a wide margin. Low values push strongly toward fraud.
+2. **V4** — High values carry fraud signal; bimodal distribution cleanly separates fraud from legitimate.
+3. **V10** — Low values push toward fraud; monotonic SHAP relationship makes this a reliable indicator.
+4. **V12** — Complementary to V14; low values associated with fraud with a tighter SHAP distribution.
+5. **V17** — Acts as a suppressor — moderate values push toward legitimate, partially offsetting fraud signals from other components.
+
+#### 4.3.3 SHAP Force Plots
+
+**True Positive:** V14 = −8.3, V10 = −4.1, V12 = −5.7 all push strongly toward
+fraud. Amount = $142 contributes negligible SHAP value. Output: 0.97. The model
+operates entirely on latent behavioral features, not transaction amount.
+
+**False Positive:** Moderate V14 and low V10 push to 0.73 fraud probability on a
+legitimate international purchase. The cardholder's unusual geographic spending
+pattern loads similarly to fraud on the relevant PCA components.
+
+**False Negative:** Card-testing transaction of $3.50. V14 and V10 carry weak fraud
+signal; V17 and V11 push back strongly, suppressing the score to 0.22. Micro-transaction
+card testing is a known blind spot for PCA-based features at small amounts.
+
+---
+
+### 4.4 Business Recommendations
+
+**1. Gate high-value transactions on new accounts (Fraud_Data)**
+SHAP finding: `time_since_signup_hours` is the dominant fraud driver, with accounts
+under 2 hours old carrying the highest fraud scores. Apply step-up verification (SMS
+OTP, email confirmation) for any transaction above a defined value threshold placed
+within the first 24 hours of account creation.
+
+**2. Add a promotional context feature to reduce false positives (Fraud_Data)**
+SHAP finding: The false positive force plot confirms the model cannot distinguish
+legitimate burst activity during promotions from fraudulent velocity. Integrate a
+real-time promotional event flag into the feature pipeline to suppress velocity
+features when a sale event is active on the user's session.
+
+**3. Deploy a parallel micro-transaction detector (creditcard)**
+SHAP finding: The false negative force plot shows that card-testing transactions
+under $5 generate insufficient PCA component deviation to trigger XGBoost, with V17
+and V11 actively suppressing the score. Train a dedicated lightweight classifier on
+micro-transaction patterns and run it in parallel with the primary model.
+
+**4. Calibrate operating thresholds by business cost, not default 0.5 (both pipelines)**
+SHAP finding: PR curves confirm strong ranking ability that the default threshold
+fails to exploit — LightGBM achieves CV AUC-PR of 0.9867 but test F1 of only 0.690
+at 0.5. Quantify the cost ratio of a missed fraud vs a false positive block and use
+it to find the optimal threshold on the PR curve for each pipeline independently.
+
+**5. Monitor V14 distribution as the primary model health signal (creditcard)**
+SHAP finding: V14 accounts for a disproportionate share of SHAP variance on the
+creditcard pipeline. Track the V14 distribution of flagged fraud cases weekly via
+KL divergence or a population stability index; a statistically significant shift
+should trigger a retraining cycle before performance degradation becomes visible
+in live metrics.
+
 ## Data Sources
 
 | Dataset | Source |
