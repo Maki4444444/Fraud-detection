@@ -80,20 +80,7 @@ def encode_categorical(
     drop: str = "first",
     save_path: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, OneHotEncoder]:
-    """
-    One-hot encode categorical columns.
-    Fit on train_df only, then transform both train and test.
 
-    Parameters
-    ----------
-    drop : 'first' drops the first category to avoid multicollinearity
-           (important for linear models like Logistic Regression).
-           Use None to keep all categories (for tree-based models).
-
-    Returns
-    -------
-    (encoded_train_df, encoded_test_df, fitted_encoder)
-    """
     available = [c for c in cols if c in train_df.columns]
     missing   = [c for c in cols if c not in train_df.columns]
     if missing:
@@ -105,8 +92,17 @@ def encode_categorical(
     test_encoded  = encoder.transform(test_df[available])
 
     feature_names = encoder.get_feature_names_out(available)
-    train_enc_df  = pd.DataFrame(train_encoded, columns=feature_names, index=train_df.index)
-    test_enc_df   = pd.DataFrame(test_encoded,  columns=feature_names, index=test_df.index)
+
+    # Clean feature names — LightGBM rejects special JSON characters
+    # [ ] < > , " { } spaces → replaced with underscores
+    import re
+    feature_names = [
+        re.sub(r'[^A-Za-z0-9_]', '_', name)
+        for name in feature_names
+    ]
+
+    train_enc_df = pd.DataFrame(train_encoded, columns=feature_names, index=train_df.index)
+    test_enc_df  = pd.DataFrame(test_encoded,  columns=feature_names, index=test_df.index)
 
     train_df = train_df.drop(columns=available).join(train_enc_df)
     test_df  = test_df.drop(columns=available).join(test_enc_df)
